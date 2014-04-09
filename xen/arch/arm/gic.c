@@ -848,7 +848,7 @@ void gic_inject(void)
 
 }
 
-static void do_sgi(struct cpu_user_regs *regs, int othercpu, enum gic_sgi sgi)
+static void do_sgi(struct cpu_user_regs *regs, enum gic_sgi sgi)
 {
     /* Lower the priority */
     GICC[GICC_EOIR] = sgi;
@@ -892,8 +892,7 @@ void gic_interrupt(struct cpu_user_regs *regs, int is_fiq)
         }
         else if (unlikely(irq < 16))
         {
-            unsigned int cpu = (intack & GICC_IA_CPU_MASK) >> GICC_IA_CPU_SHIFT;
-            do_sgi(regs, cpu, irq);
+            do_sgi(regs, irq);
         }
         else
         {
