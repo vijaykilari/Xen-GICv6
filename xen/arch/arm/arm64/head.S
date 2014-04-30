@@ -224,13 +224,13 @@ skip_bss:
         ldr   x0, =MAIRVAL
         msr   mair_el2, x0
 
-        /* Set up the HTCR:
-         * PASize -- 40 bits / 1TB
-         * Top byte is used
-         * PT walks use Inner-Shareable accesses,
-         * PT walks are write-back, write-allocate in both cache levels,
-         * Full 64-bit address space goes through this table. */
-        ldr   x0, =0x80823500
+        mrs   x1, ID_AA64MMFR0_EL1
+
+        /* Set up the HTCR */
+        ldr   x0, =TCR_VAL_BASE
+
+        /* Set TCR_EL2.IPS based on ID_AA64MMFR0_EL1.PARange */
+        bfi   x0, x1, #16, #3
         msr   tcr_el2, x0
 
         /* Set up the SCTLR_EL2:

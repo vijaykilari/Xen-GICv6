@@ -31,6 +31,95 @@
 #define MPIDR_AFFINITY_LEVEL(mpidr, level) \
          ((mpidr >> MPIDR_LEVEL_SHIFT(level)) & MPIDR_LEVEL_MASK)
 
+/* 
+ * VTCR register configuration for stage 2 translation
+ */
+#define VTCR_T0SZ_SHIFT   0
+#define VTCR_TOSZ_40BIT  (24 << VTCR_T0SZ_SHIFT)
+#define VTCR_TOSZ_48BIT  (16 << VTCR_T0SZ_SHIFT)
+
+#define VTCR_SL0_SHIFT    6
+#define VTCR_SL0_0       (0x2 << VTCR_SL0_SHIFT)
+#define VTCR_SL0_1       (0x1 << VTCR_SL0_SHIFT)
+#define VTCR_SL0_2       (0x0 << VTCR_SL0_SHIFT)
+
+#define VTCR_IRGN0_SHIFT  8
+#define VTCR_IRGN0_NC    (0x0 << VTCR_IRGN0_SHIFT)
+#define VTCR_IRGN0_WBWA  (0x1 << VTCR_IRGN0_SHIFT)
+#define VTCR_IRGN0_WT    (0x2 << VTCR_IRGN0_SHIFT)
+#define VTCR_IRGN0_WB    (0x3 << VTCR_IRGN0_SHIFT)
+
+#define VTCR_ORGN0_SHIFT  10
+#define VTCR_ORGN0_NC    (0x0 << VTCR_ORGN0_SHIFT)
+#define VTCR_ORGN0_WBWA  (0x1 << VTCR_ORGN0_SHIFT)
+#define VTCR_ORGN0_WT    (0x2 << VTCR_ORGN0_SHIFT)
+#define VTCR_ORGN0_WB    (0x3 << VTCR_ORGN0_SHIFT)
+
+#define VTCR_SH0_SHIFT    12
+#define VTCR_SH0_NS      (0x0 << VTCR_SH0_SHIFT)
+#define VTCR_SH0_OS      (0x2 << VTCR_SH0_SHIFT)
+#define VTCR_SH0_IS      (0x3 << VTCR_SH0_SHIFT)
+
+#define VTCR_TG0_SHIFT    14
+#define VTCR_TG0_4K      (0x0 << VTCR_TG0_SHIFT)
+#define VTCR_TG0_64K     (0x1 << VTCR_TG0_SHIFT)
+
+#define VTCR_PS_SHIFT     16
+#define VTCR_PS_32BIT    (0x0 << VTCR_PS_SHIFT)
+#define VTCR_PS_40BIT    (0x2 << VTCR_PS_SHIFT)
+#define VTCR_PS_48BIT    (0x5 << VTCR_PS_SHIFT)
+#define VTCR_PS_48BIT_VAL   0x5
+
+#ifdef CONFIG_ARM_64
+/*
+ * SL0=10 => Level-0 initial look up level
+ * SH0=11 => Inner-shareable
+ * ORGN0=IRGN0=01 => Normal memory, Write-Back Write-Allocate Cacheable
+ * TG0=00 => 4K page granular size
+ */
+#define VTCR_VAL_BASE  ((VTCR_SL0_0)      | \
+                        (VTCR_IRGN0_WBWA) | \
+                        (VTCR_ORGN0_WBWA) | \
+                        (VTCR_SH0_OS)     | \
+                        (VTCR_TG0_4K))
+#else
+/*
+ * T0SZ=(1)1000 => -8 (32-(-8) = 40 bit IPA)
+ * SL0=01 => Level-1 initial look up level
+ * SH0=11 => Inner-shareable
+ * ORGN0=IRGN0=01 => Normal memory, Write-Back Write-Allocate Cacheable
+ * TG0=00 => 4K page granular size
+ * PS=010 => 40 bits
+ * 40 bit IPA and 32 bit PA
+ */
+#define VTCR_VAL_BASE  ((VTCR_TOSZ_40BIT) | \
+                       (VTCR_SL0_1)      | \
+                       (VTCR_IRGN0_WBWA) | \
+                       (VTCR_ORGN0_WBWA) | \
+                       (VTCR_SH0_OS)     | \
+                       (VTCR_TG0_4K)     | \
+                       (VTCR_PS_32BIT))
+#endif
+
+/* TCR register configuration for Xen Stage 1 translation*/
+
+#define TCR_TBI_SHIFT       20
+#define TCR_TBI_USE_TBYTE  (0x0 << TCR_TBI_SHIFT)
+
+#ifdef CONFIG_ARM_64
+/* 
+ * 48 bit Hypervisor - VA  to 40 bit PA
+ * if platform supports 48 bit PA update runtime in head.S
+ */
+#define TCR_VAL_BASE   ((VTCR_TOSZ_48BIT)   | \
+                       (VTCR_IRGN0_WBWA)   | \
+                       (VTCR_ORGN0_WBWA)   | \
+                       (VTCR_SH0_OS)       | \
+                       (VTCR_TG0_4K)       | \
+                       (VTCR_PS_40BIT)     | \
+                       (TCR_TBI_USE_TBYTE))
+#endif
+
 /* TTBCR Translation Table Base Control Register */
 #define TTBCR_EAE    _AC(0x80000000,U)
 #define TTBCR_N_MASK _AC(0x07,U)
@@ -201,8 +290,19 @@ struct cpuinfo_arm {
         uint64_t bits[2];
     } aux64;
 
-    struct {
+    union {
         uint64_t bits[2];
+        struct {
+            unsigned long pa_range:4;
+            unsigned long asid_bits:4;
+            unsigned long bigend:4;
+            unsigned long secure_ns:4;
+            unsigned long bigend_el0:4;
+            unsigned long tgranule_16K:4;
+            unsigned long tgranule_64K:4;
+            unsigned long tgranule_4K:4;
+            unsigned long __res0:32;
+       };
     } mm64;
 
     struct {

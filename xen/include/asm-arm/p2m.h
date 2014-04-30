@@ -13,8 +13,9 @@ struct p2m_domain {
     /* Pages used to construct the p2m */
     struct page_list_head pages;
 
-    /* Root of p2m page tables, 2 contiguous pages */
-    struct page_info *first_level;
+    /* ARMv7: Root of p2m page tables, 2 contiguous pages */
+    /* ARMv8: Look up table is zeroeth level */
+    struct page_info *root_level;
 
     /* Current VMID in use */
     uint8_t vmid;

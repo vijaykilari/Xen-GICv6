@@ -10,29 +10,42 @@
 #include <asm/hardirq.h>
 #include <asm/page.h>
 
+#ifdef CONFIG_ARM_64
+/* Zeroeth level is of 1 page size */
+#define P2M_ROOT_ORDER 0
+#else
 /* First level P2M is 2 consecutive pages */
-#define P2M_FIRST_ORDER 1
-#define P2M_FIRST_ENTRIES (LPAE_ENTRIES<<P2M_FIRST_ORDER)
+#define P2M_ROOT_ORDER 1
+#endif
+#define P2M_FIRST_ENTRIES (LPAE_ENTRIES << P2M_ROOT_ORDER)
 
 void dump_p2m_lookup(struct domain *d, paddr_t addr)
 {
     struct p2m_domain *p2m = &d->arch.p2m;
-    lpae_t *first;
+    lpae_t *lookup;
 
     printk("dom%d IPA 0x%"PRIpaddr"\n", d->domain_id, addr);
 
-    if ( first_linear_offset(addr) > LPAE_ENTRIES )
+#ifdef CONFIG_ARM_64
+    if ( zeroeth_linear_offset(addr) > P2M_FIRST_ENTRIES )
+    {
+        printk("Beyond number of support entries at zeroeth level\n");
+        return;
+    }
+#else
+    if ( first_linear_offset(addr) > P2M_FIRST_ENTRIES )
     {
         printk("Cannot dump addresses in second of first level pages...\n");
         return;
     }
+#endif
 
     printk("P2M @ %p mfn:0x%lx\n",
-           p2m->first_level, page_to_mfn(p2m->first_level));
+           p2m->root_level, page_to_mfn(p2m->root_level));
 
-    first = __map_domain_page(p2m->first_level);
-    dump_pt_walk(first, addr);
-    unmap_domain_page(first);
+    lookup = __map_domain_page(p2m->root_level);
+    dump_pt_walk(lookup, addr);
+    unmap_domain_page(lookup);
 }
 
 static void p2m_load_VTTBR(struct domain *d)
@@ -87,6 +100,20 @@ void flush_tlb_domain(struct domain *d)
         p2m_load_VTTBR(current->domain);
 }
 
+#ifdef CONFIG_ARM_64
+/*
+ * Map zeroeth level page that addr contains.
+ */
+static lpae_t *p2m_map_zeroeth(struct p2m_domain *p2m, paddr_t addr)
+{
+    if ( zeroeth_linear_offset(addr) >= LPAE_ENTRIES )
+        return NULL;
+
+    return __map_domain_page(p2m->root_level);
+}
+
+#else
+
 static int p2m_first_level_index(paddr_t addr)
 {
     /*
@@ -107,10 +134,11 @@ static lpae_t *p2m_map_first(struct p2m_domain *p2m, paddr_t addr)
     if ( first_linear_offset(addr) >= P2M_FIRST_ENTRIES )
         return NULL;
 
-    page = p2m->first_level + p2m_first_level_index(addr);
+    page = p2m->root_level + p2m_first_level_index(addr);
 
     return __map_domain_page(page);
 }
+#endif
 
 /*
  * Lookup the MFN corresponding to a domain's PFN.
@@ -122,6 +150,9 @@ paddr_t p2m_lookup(struct domain *d, paddr_t paddr, p2m_type_t *t)
 {
     struct p2m_domain *p2m = &d->arch.p2m;
     lpae_t pte, *first = NULL, *second = NULL, *third = NULL;
+#ifdef CONFIG_ARM_64
+    lpae_t *zeroeth = NULL;
+#endif
     paddr_t maddr = INVALID_PADDR;
     p2m_type_t _t;
 
@@ -132,9 +163,26 @@ paddr_t p2m_lookup(struct domain *d, paddr_t paddr, p2m_type_t *t)
 
     spin_lock(&p2m->lock);
 
+#ifdef CONFIG_ARM_64
+    zeroeth = p2m_map_zeroeth(p2m, paddr);
+    if ( !zeroeth )
+        goto err;
+
+    pte = zeroeth[zeroeth_table_offset(paddr)];
+    /* Zeroeth level does not support block translation
+     * so pte.p2m.table should be always set.
+     * Just check for valid bit
+     */
+    if ( !pte.p2m.valid )
+        goto done;
+
+    /* Map first level table */
+    first = map_domain_page(pte.p2m.base);
+#else
     first = p2m_map_first(p2m, paddr);
     if ( !first )
         goto err;
+#endif
 
     pte = first[first_table_offset(paddr)];
     if ( !pte.p2m.valid || !pte.p2m.table )
@@ -163,6 +211,9 @@ done:
     if (third) unmap_domain_page(third);
     if (second) unmap_domain_page(second);
     if (first) unmap_domain_page(first);
+#ifdef CONFIG_ARM_64
+    if (zeroeth) unmap_domain_page(zeroeth);
+#endif
 
 err:
     spin_unlock(&p2m->lock);
@@ -311,8 +362,14 @@ static int apply_p2m_changes(struct domain *d,
     struct p2m_domain *p2m = &d->arch.p2m;
     lpae_t *first = NULL, *second = NULL, *third = NULL;
     paddr_t addr;
-    unsigned long cur_first_page = ~0,
-                  cur_first_offset = ~0,
+#ifdef CONFIG_ARM_64
+    lpae_t *zeroeth = NULL;
+    unsigned long cur_zeroeth_page = ~0,
+                  cur_zeroeth_offset = ~0;
+#else
+    unsigned long cur_first_page = ~0;
+#endif
+    unsigned long cur_first_offset = ~0,
                   cur_second_offset = ~0;
     unsigned long count = 0;
     unsigned int flush = 0;
@@ -331,6 +388,44 @@ static int apply_p2m_changes(struct domain *d,
     addr = start_gpaddr;
     while ( addr < end_gpaddr )
     {
+#ifdef CONFIG_ARM_64
+        /* Find zeroeth offset and map zeroeth page */
+        if ( cur_zeroeth_page != zeroeth_table_offset(addr) )
+        {
+            if ( zeroeth ) unmap_domain_page(zeroeth);
+            zeroeth = p2m_map_zeroeth(p2m, addr);
+            if ( !zeroeth )
+            {
+                rc = -EINVAL;
+                goto out;
+            }
+            cur_zeroeth_page = zeroeth_table_offset(addr);
+        }
+
+        if ( !zeroeth[zeroeth_table_offset(addr)].p2m.valid )
+        {
+            if ( !populate )
+            {
+                addr = (addr + ZEROETH_SIZE) & ZEROETH_MASK;
+                continue;
+            }
+            rc = p2m_create_table(d, &zeroeth[zeroeth_table_offset(addr)]);
+            if ( rc < 0 )
+            {
+                printk("p2m_populate_ram: L0 failed\n");
+                goto out;
+            }
+        } 
+
+        BUG_ON(!zeroeth[zeroeth_table_offset(addr)].p2m.valid);
+
+        if ( cur_zeroeth_offset != zeroeth_table_offset(addr) )
+        {
+            if ( first ) unmap_domain_page(first);
+            first = map_domain_page(zeroeth[zeroeth_table_offset(addr)].p2m.base);
+            cur_zeroeth_offset = zeroeth_table_offset(addr);
+        }
+#else
         if ( cur_first_page != p2m_first_level_index(addr) )
         {
             if ( first ) unmap_domain_page(first);
@@ -342,7 +437,7 @@ static int apply_p2m_changes(struct domain *d,
             }
             cur_first_page = p2m_first_level_index(addr);
         }
-
+#endif
         if ( !first[first_table_offset(addr)].p2m.valid )
         {
             if ( !populate )
@@ -510,6 +605,9 @@ out:
     if (third) unmap_domain_page(third);
     if (second) unmap_domain_page(second);
     if (first) unmap_domain_page(first);
+#ifdef CONFIG_ARM_64
+    if ( zeroeth ) unmap_domain_page(zeroeth);
+#endif
 
     spin_unlock(&p2m->lock);
 
@@ -560,19 +658,26 @@ int p2m_alloc_table(struct domain *d)
     struct p2m_domain *p2m = &d->arch.p2m;
     struct page_info *page;
 
-    page = alloc_domheap_pages(NULL, P2M_FIRST_ORDER, 0);
+    page = alloc_domheap_pages(NULL, P2M_ROOT_ORDER, 0);
     if ( page == NULL )
         return -ENOMEM;
 
     spin_lock(&p2m->lock);
 
     /* Clear both first level pages */
-    clear_and_clean_page(page);
-    clear_and_clean_page(page + 1);
+    p = __map_domain_page(page);
+    clear_page(p);
+    unmap_domain_page(p);
 
-    p2m->first_level = page;
+#ifdef CONFIG_ARM_32
+    p = __map_domain_page(page + 1);
+    clear_page(p);
+    unmap_domain_page(p);
+#endif
 
-    d->arch.vttbr = page_to_maddr(p2m->first_level)
+    p2m->root_level = page;
+
+    d->arch.vttbr = page_to_maddr(p2m->root_level)
         | ((uint64_t)p2m->vmid&0xff)<<48;
 
     /* Make sure that all TLBs corresponding to the new VMID are flushed
@@ -649,9 +754,9 @@ void p2m_teardown(struct domain *d)
     while ( (pg = page_list_remove_head(&p2m->pages)) )
         free_domheap_page(pg);
 
-    free_domheap_pages(p2m->first_level, P2M_FIRST_ORDER);
+    free_domheap_pages(p2m->root_level, P2M_ROOT_ORDER);
 
-    p2m->first_level = NULL;
+    p2m->root_level = NULL;
 
     p2m_free_vmid(d);
 
@@ -675,7 +780,7 @@ int p2m_init(struct domain *d)
 
     d->arch.vttbr = 0;
 
-    p2m->first_level = NULL;
+    p2m->root_level = NULL;
 
     p2m->max_mapped_gfn = 0;
     p2m->lowest_mapped_gfn = ULONG_MAX;
