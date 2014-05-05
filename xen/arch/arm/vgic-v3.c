@@ -35,7 +35,7 @@
 #include <asm/vgic.h>
 
 static int __vgic_v3_rdistr_rd_mmio_read(struct vcpu *v, mmio_info_t *info,
-                                        uint32_t gicr_reg)
+                                         uint32_t gicr_reg)
 {
     struct hsr_dabt dabt = info->dabt;
     struct cpu_user_regs *regs = guest_cpu_user_regs();
@@ -141,7 +141,7 @@ read_as_zero:
 }
 
 static int __vgic_v3_rdistr_rd_mmio_write(struct vcpu *v, mmio_info_t *info,
-                                    uint32_t gicr_reg)
+                                          uint32_t gicr_reg)
 {
     struct hsr_dabt dabt = info->dabt;
     struct cpu_user_regs *regs = guest_cpu_user_regs();
@@ -214,7 +214,7 @@ write_ignore:
 }
 
 static int __vgic_v3_distr_common_mmio_read(struct vcpu *v, mmio_info_t *info,
-                                           uint32_t reg)
+                                            uint32_t reg)
 {
     struct hsr_dabt dabt = info->dabt;
     struct cpu_user_regs *regs = guest_cpu_user_regs();
@@ -313,7 +313,7 @@ read_as_zero:
 }
 
 static int __vgic_v3_distr_common_mmio_write(struct vcpu *v, mmio_info_t *info,
-                                            uint32_t reg)
+                                             uint32_t reg)
 {
     struct hsr_dabt dabt = info->dabt;
     struct cpu_user_regs *regs = guest_cpu_user_regs();
@@ -423,7 +423,7 @@ write_ignore:
 }
 
 static int vgic_v3_rdistr_sgi_mmio_read(struct vcpu *v, mmio_info_t *info,
-                                     uint32_t gicr_reg)
+                                        uint32_t gicr_reg)
 {
     struct hsr_dabt dabt = info->dabt;
     struct cpu_user_regs *regs = guest_cpu_user_regs();
@@ -484,7 +484,7 @@ read_as_zero:
 }
 
 static int vgic_v3_rdistr_sgi_mmio_write(struct vcpu *v, mmio_info_t *info,
-                                      uint32_t gicr_reg)
+                                         uint32_t gicr_reg)
 {
     struct hsr_dabt dabt = info->dabt;
     struct cpu_user_regs *regs = guest_cpu_user_regs();
@@ -834,6 +834,57 @@ write_ignore_64:
     return 1;
 }
 
+static int vgicv3_to_sgi(struct vcpu *v, register_t sgir)
+{
+    int virq;
+    int irqmode;
+    enum gic_sgi_mode sgi_mode;
+    unsigned long vcpu_mask = 0;
+
+    irqmode = (sgir >> ICH_SGI_IRQMODE_SHIFT) & ICH_SGI_IRQMODE_MASK;
+    virq = (sgir >> ICH_SGI_IRQ_SHIFT ) & ICH_SGI_IRQ_MASK;
+    vcpu_mask = sgir & ICH_SGI_TARGETLIST_MASK;
+
+    /* Map GIC sgi value to enum value */
+    switch ( irqmode )
+    {
+    case ICH_SGI_TARGET_LIST:
+        sgi_mode = SGI_TARGET_LIST;
+        break;
+    case ICH_SGI_TARGET_OTHERS:
+        sgi_mode = SGI_TARGET_OTHERS;
+        break;
+    default:
+        BUG();
+    }
+
+    return vgic_to_sgi(v, sgir, sgi_mode, virq, vcpu_mask);
+}
+
+int vgic_emulate(struct cpu_user_regs *regs, union hsr hsr)
+{
+    struct vcpu *v = current;
+    struct hsr_sysreg sysreg = hsr.sysreg;
+    register_t *r = select_user_reg(regs, sysreg.reg);
+
+    ASSERT (hsr.ec == HSR_EC_SYSREG);
+
+    switch ( hsr.bits & HSR_SYSREG_REGS_MASK )
+    {
+    case HSR_SYSREG_ICC_SGI1R_EL1:
+        /* WO */
+        if ( !sysreg.read )
+            return vgic_send_sgi(v, *r);
+        else
+        {
+            gdprintk(XENLOG_WARNING, "Reading SGI1R_EL1 - WO register\n");
+            return 0;
+        }
+    default:
+        return 0;
+    }
+}
+
 static const struct mmio_handler_ops vgic_rdistr_mmio_handler = {
     .read_handler  = vgic_v3_rdistr_mmio_read,
     .write_handler = vgic_v3_rdistr_mmio_write,
@@ -865,6 +916,7 @@ static int vgicv3_domain_init(struct domain *d)
 {
     int i;
 
+     /* We rely on gicv init to get dbase and size */
     register_mmio_handler(d, &vgic_distr_mmio_handler, d->arch.vgic.dbase,
                           d->arch.vgic.dbase_size);
 
@@ -883,6 +935,7 @@ static int vgicv3_domain_init(struct domain *d)
 static const struct vgic_ops v3_ops = {
     .vcpu_init   = vgicv3_vcpu_init,
     .domain_init = vgicv3_domain_init,
+    .send_sgi    = vgicv3_to_sgi,
 };
 
 int vgic_v3_init(struct domain *d)

@@ -41,6 +41,7 @@
 #include "decode.h"
 #include "vtimer.h"
 #include <asm/gic.h>
+#include <asm/vgic.h>
 
 /* The base of the stack must always be double-word aligned, which means
  * that both the kernel half of struct cpu_user_regs (which is pushed in
@@ -493,6 +494,18 @@ static void inject_dabt_exception(struct cpu_user_regs *regs,
 #ifdef CONFIG_ARM_64
         else
             inject_dabt64_exception(regs, addr, instr_len);
+#endif
+}
+
+static void inject_undef_exception(struct cpu_user_regs *regs,
+                                   register_t addr,
+                                   int instr_len)
+{
+    if ( is_32bit_domain(current->domain) )
+        inject_undef32_exception(regs);
+#ifdef CONFIG_ARM_64
+    else
+        inject_undef64_exception(regs, instr_len);
 #endif
 }
 
@@ -1571,6 +1584,7 @@ static void do_sysreg(struct cpu_user_regs *regs,
                       union hsr hsr)
 {
     register_t *x = select_user_reg(regs, hsr.sysreg.reg);
+    register_t addr;
 
     switch ( hsr.bits & HSR_SYSREG_REGS_MASK )
     {
@@ -1619,6 +1633,22 @@ static void do_sysreg(struct cpu_user_regs *regs,
             domain_crash_synchronous();
         }
         break;
+    case HSR_SYSREG_ICC_SGI1R_EL1:
+        if ( !vgic_emulate(regs, hsr) )
+        {
+            addr = READ_SYSREG64(FAR_EL2);
+            dprintk(XENLOG_WARNING,
+                    "failed emulation of sysreg ICC_SGI1R_EL1 access\n");
+            inject_undef_exception(regs, addr, hsr.len);
+        }
+        break;
+    case HSR_SYSREG_ICC_SGI0R_EL1:
+    case HSR_SYSREG_ICC_ASGI1R_EL1:
+        /* TBD: Implement to support secure grp0/1 SGI forwarding */
+        dprintk(XENLOG_WARNING,
+                "Emulation of sysreg ICC_SGI0R_EL1/ASGI1R_EL1 not supported\n");
+        addr = READ_SYSREG64(FAR_EL2);
+        inject_undef_exception(regs, addr, hsr.len);
     default:
  bad_sysreg:
         {
