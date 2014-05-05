@@ -158,9 +158,9 @@
 #define DT_MATCH_GIC_V2 DT_MATCH_COMPATIBLE(DT_COMPAT_GIC_CORTEX_A15), \
                         DT_MATCH_COMPATIBLE(DT_COMPAT_GIC_CORTEX_A7)
 
-#define DT_MATCH_GIC_V3_STRING1      "arm,gic-v3"
+#define DT_COMPAT_GIC_V3             "arm,gic-v3"
 
-#define DT_MATCH_GIC_V3 DT_MATCH_COMPATIBLE(DT_MATCH_GIC_V3_STRING1);
+#define DT_MATCH_GIC_V3 DT_MATCH_COMPATIBLE(DT_COMPAT_GIC_V3)
 
 /*
  * GICv3 registers that needs to be saved/restored
@@ -336,9 +336,13 @@ struct gic_hw_operations {
     unsigned int (*read_apr)(int apr_reg);
     /* Secondary CPU init */
     int (*secondary_init)(void);
+    int (*make_dt_node)(const struct domain *d,
+                        const struct dt_device_node *node, void *fdt);
 };
 
 void register_gic_ops(const struct gic_hw_operations *ops);
+int gic_make_node(const struct domain *d,const struct dt_device_node *node,
+                  void *fdt);
 
 #endif /* __ASSEMBLY__ */
 #endif
