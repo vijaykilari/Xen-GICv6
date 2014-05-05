@@ -133,7 +133,7 @@ static int vgic_v2_distr_mmio_read(struct vcpu *v, mmio_info_t *info)
         if ( rank == NULL) goto read_as_zero;
 
         vgic_lock_rank(v, rank);
-        *r = rank->itargets[REG_RANK_INDEX(8, gicd_reg - GICD_ITARGETSR,
+        *r = rank->v2.itargets[REG_RANK_INDEX(8, gicd_reg - GICD_ITARGETSR,
                                            DABT_WORD)];
         if ( dabt.size == DABT_BYTE )
             *r = vgic_byte_read(*r, dabt.sign, gicd_reg);
@@ -361,10 +361,10 @@ static int vgic_v2_distr_mmio_write(struct vcpu *v, mmio_info_t *info)
         if ( rank == NULL) goto write_ignore;
         vgic_lock_rank(v, rank);
         if ( dabt.size == DABT_WORD )
-            rank->itargets[REG_RANK_INDEX(8, gicd_reg - GICD_ITARGETSR,
+            rank->v2.itargets[REG_RANK_INDEX(8, gicd_reg - GICD_ITARGETSR,
                                           DABT_WORD)] = *r;
         else
-            vgic_byte_write(&rank->itargets[REG_RANK_INDEX(8,
+            vgic_byte_write(&rank->v2.itargets[REG_RANK_INDEX(8,
                        gicd_reg - GICD_ITARGETSR, DABT_WORD)], *r, gicd_reg);
         vgic_unlock_rank(v, rank);
         return 1;
@@ -466,7 +466,7 @@ static int vgic_v2_vcpu_init(struct vcpu *v)
 
     /* For SGI and PPI the target is always this CPU */
     for ( i = 0 ; i < 8 ; i++ )
-        v->arch.vgic.private_irqs->itargets[i] =
+        v->arch.vgic.private_irqs->v2.itargets[i] =
               (1<<(v->vcpu_id+0))
             | (1<<(v->vcpu_id+8))
             | (1<<(v->vcpu_id+16))
