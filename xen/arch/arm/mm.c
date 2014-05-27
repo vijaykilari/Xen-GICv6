@@ -162,13 +162,25 @@ static inline void check_memory_layout_alignment_constraints(void) {
 #endif
 }
 
-void dump_pt_walk(lpae_t *first, paddr_t addr)
+void dump_pt_walk(lpae_t *root, paddr_t addr)
 {
     lpae_t *second = NULL, *third = NULL;
-
-    if ( first_table_offset(addr) >= LPAE_ENTRIES )
+    lpae_t *first = NULL;
+#ifdef CONFIG_ARM_64
+    if ( zeroeth_table_offset(addr) >= LPAE_ENTRIES )
         return;
 
+    printk("0TH[0x%x] = 0x%"PRIpaddr"\n", zeroeth_table_offset(addr),
+           root[zeroeth_table_offset(addr)].bits);
+    if ( !root[zeroeth_table_offset(addr)].walk.valid )
+        goto done;
+
+    first = map_domain_page(root[zeroeth_table_offset(addr)].walk.base);
+#else
+    first = root;
+    if ( first_table_offset(addr) >= LPAE_ENTRIES )
+        return;
+#endif
     printk("1ST[0x%x] = 0x%"PRIpaddr"\n", first_table_offset(addr),
            first[first_table_offset(addr)].bits);
     if ( !first[first_table_offset(addr)].walk.valid ||
@@ -189,6 +201,9 @@ void dump_pt_walk(lpae_t *first, paddr_t addr)
 done:
     if (third) unmap_domain_page(third);
     if (second) unmap_domain_page(second);
+#ifdef CONFIG_ARM_64
+    if ( first ) unmap_domain_page(first);
+#endif
 
 }
 
