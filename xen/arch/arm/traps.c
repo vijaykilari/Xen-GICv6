@@ -37,6 +37,7 @@
 #include <asm/cpregs.h>
 #include <asm/psci.h>
 #include <asm/mmio.h>
+#include <asm/cpufeature.h>
 
 #include "decode.h"
 #include "vtimer.h"
@@ -364,7 +365,8 @@ static void inject_abt32_exception(struct cpu_user_regs *regs,
         register_t far = READ_SYSREG(FAR_EL1) & 0xffffffffUL;
         far |= addr << 32;
         WRITE_SYSREG(far, FAR_EL1);
-        WRITE_SYSREG(fsr, IFSR32_EL2);
+        if ( cpu_has_el2_32 )
+            WRITE_SYSREG(fsr, IFSR32_EL2);
 
 #endif
     }
@@ -756,7 +758,8 @@ void show_registers(struct cpu_user_regs *regs)
 #else
     ctxt.far = READ_SYSREG(FAR_EL1);
     ctxt.esr_el1 = READ_SYSREG(ESR_EL1);
-    ctxt.ifsr32_el2 = READ_SYSREG(IFSR32_EL2);
+    if ( cpu_has_el2_32 )
+        ctxt.ifsr32_el2 = READ_SYSREG(IFSR32_EL2);
 #endif
     ctxt.vttbr_el2 = READ_SYSREG64(VTTBR_EL2);
 
