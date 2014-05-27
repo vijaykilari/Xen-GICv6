@@ -13,9 +13,6 @@
 #endif
 #define PADDR_MASK              ((1ULL << PADDR_BITS)-1)
 
-#define VADDR_BITS              32
-#define VADDR_MASK              (~0UL)
-
 /* Shareability values for the LPAE entries */
 #define LPAE_SH_NON_SHAREABLE 0x0
 #define LPAE_SH_UNPREDICTALE  0x1
