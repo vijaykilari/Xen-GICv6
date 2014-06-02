@@ -138,8 +138,10 @@ int __init init_xen_time(void)
         panic("Timer: Cannot initialize platform timer");
 
     /* Check that this CPU supports the Generic Timer interface */
+#ifdef CONFIG_ARM_32
     if ( !cpu_has_gentimer )
         panic("CPU does not support the Generic Timer v1 interface");
+#endif
 
     res = dt_property_read_u32(dev, "clock-frequency", &rate);
     if ( res )
