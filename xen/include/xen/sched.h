@@ -829,6 +829,22 @@ void watchdog_domain_destroy(struct domain *d);
 #define need_iommu(d)    (0)
 #endif
 
+static inline bool_t is_vcpu_online(const struct domain *d, int vcpuid)
+{
+    const struct vcpu *v;
+
+    if ( vcpuid >= d->max_vcpus || d->vcpu == NULL )
+        return 0;
+
+    v = d->vcpu[vcpuid];
+    if ( v == NULL )
+        return 0;
+    if ( test_bit(_VPF_down, &v->pause_flags) )
+        return 0;
+
+    return 1;
+}
+
 void set_vcpu_migration_delay(unsigned int delay);
 unsigned int get_vcpu_migration_delay(void);
 
