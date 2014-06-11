@@ -67,6 +67,8 @@ do {                                                            \
 
 #define reserve_bootmem(_p,_l) ((void)0)
 
+#define SZ_64K  0x00010000
+
 struct domain;
 
 void cmdline_parse(const char *cmdline);
