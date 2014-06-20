@@ -70,6 +70,9 @@ void gic_save_state(struct vcpu *v)
 {
     ASSERT(!local_irq_is_enabled());
 
+    if ( is_idle_vcpu(v) )
+        return;
+
     /* No need for spinlocks here because interrupts are disabled around
      * this call and it only accesses struct vcpu fields that cannot be
      * accessed simultaneously by another pCPU.
